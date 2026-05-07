@@ -240,6 +240,12 @@ def _audio_to_tuple(audio: Any) -> Optional[Tuple[np.ndarray, int]]:
 
 def _wav_to_gradio_audio(wav: np.ndarray, sr: int) -> Tuple[int, np.ndarray]:
     wav = np.asarray(wav, dtype=np.float32)
+    if wav.size == 0:
+        raise ValueError("Generated audio is empty.")
+    if not np.isfinite(wav).all():
+        raise ValueError(
+            "Generated audio contains NaN or Inf values. This usually indicates an unstable speech-tokenizer decode dtype."
+        )
     return sr, wav
 
 

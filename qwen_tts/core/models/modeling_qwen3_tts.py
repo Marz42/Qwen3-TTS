@@ -52,6 +52,14 @@ from .configuration_qwen3_tts import (Qwen3TTSConfig,
 logger = logging.get_logger(__name__)
 
 
+def _should_force_speech_tokenizer_float32(dtype) -> bool:
+    if dtype in (torch.float16, torch.bfloat16):
+        return True
+    if isinstance(dtype, str):
+        return dtype.strip().lower() in {"float16", "fp16", "half", "bfloat16", "bf16"}
+    return False
+
+
 def download_weights_from_hf_specific(
     model_name_or_path: str,
     cache_dir: str | None,
@@ -1912,10 +1920,18 @@ class Qwen3TTSForConditionalGeneration(Qwen3TTSPreTrainedModel, GenerationMixin)
         if speech_tokenizer_path is None:
             raise ValueError(f"""{pretrained_model_name_or_path}/{speech_tokenizer_path} not exists""")
         speech_tokenizer_dir = os.path.dirname(speech_tokenizer_path)
+        speech_tokenizer_kwargs = dict(kwargs)
+        speech_tokenizer_dtype = speech_tokenizer_kwargs.get("dtype", speech_tokenizer_kwargs.get("torch_dtype", None))
+        if _should_force_speech_tokenizer_float32(speech_tokenizer_dtype):
+            speech_tokenizer_kwargs["dtype"] = torch.float32
+            speech_tokenizer_kwargs.pop("torch_dtype", None)
+            logger.warning(
+                "Loading speech tokenizer in float32 for numerical stability because half-precision decode can produce NaN audio."
+            )
         speech_tokenizer = Qwen3TTSTokenizer.from_pretrained(
             speech_tokenizer_dir,
             *model_args,
-            **kwargs,
+            **speech_tokenizer_kwargs,
         )
         model.load_speech_tokenizer(speech_tokenizer)
 
