@@ -9,6 +9,7 @@ import numpy as np
 import soundfile as sf
 import torch
 
+from ..inference.qwen3_tts_model import VoiceClonePromptItem
 from .metadata import MetadataStore, ModelRecord
 from .model_manager import ModelManager
 from .runtime import RuntimeBaseline
@@ -105,7 +106,11 @@ def _resolve_prompt_if_needed(*, payload: dict[str, Any], metadata_store: Metada
     prompt_path = Path(prompt_record.prompt_file)
     if not prompt_path.is_file():
         raise FileNotFoundError(f"Prompt file not found: {prompt_path}")
-    return torch.load(prompt_path, map_location="cpu")
+    try:
+        raw = torch.load(prompt_path, map_location="cpu", weights_only=True)
+    except Exception as exc:
+        raise ValueError(f"Failed to load prompt file: {prompt_path}") from exc
+    return _reconstruct_prompt(raw)
 
 
 def _validate_payload(*, record: ModelRecord, payload: dict[str, Any], prompt_object: Optional[Any]) -> None:
@@ -133,6 +138,22 @@ def _validate_payload(*, record: ModelRecord, payload: dict[str, Any], prompt_ob
         return
 
     raise ValueError(f"Unsupported model type: {record.type}")
+
+
+def _reconstruct_prompt(raw: Any) -> Any:
+    """Reconstruct List[VoiceClonePromptItem] from a serialized list of plain dicts.
+
+    Saved by voice_service._to_serializable().  If the loaded object is already
+    in some other format (e.g. legacy dict), return it unchanged.
+    """
+    if (
+        isinstance(raw, list)
+        and raw
+        and isinstance(raw[0], dict)
+        and "ref_spk_embedding" in raw[0]
+    ):
+        return [VoiceClonePromptItem(**item) for item in raw]
+    return raw
 
 
 def _collect_generation_kwargs(payload: dict[str, Any]) -> dict[str, Any]:

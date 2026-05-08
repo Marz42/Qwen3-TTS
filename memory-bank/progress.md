@@ -14,6 +14,7 @@
 - 已定位并修复半精度下 speech tokenizer 产生全 NaN 波形的 bug，1.7B CustomVoice / VoiceDesign 音频现在可正常收听。
 - 已启动本地 MVP 实施，并完成 Phase 0、Phase 1、Phase 2 与 Phase 3。
 - 当前代码状态已具备运行基线模块、SQLite 元数据层、单例模型管理器、FastAPI 基础壳层，并已完成 Phase 4 验收。
+- Phase 5 已完成验收，`extract_prompt` API、prompt 落盘、模拟重启后 `prompt_id` 复用与受控错误均已验证。
 
 ## 本次已完成内容
 
@@ -75,6 +76,22 @@
 	- `after_custom_again_http`: allocated/reserved = `4316.84 / 4324 MB`
 	- 结论：切换后显存维持在稳定区间，未观察到随切换轮次线性累积。
 - 验证过程中生成的占位模型目录、prompt 文件和临时数据库已清理，当前保留的是正式目录骨架和实现代码。
+
+### MVP Phase 5 已完成验收
+
+- 新增 `qwen_tts/app/voice_service.py`，实现 Base prompt 提取与落盘注册。
+- 新增 `POST /api/v1/voices/extract_prompt` 及对应请求/响应 schema。
+- prompt 提取链路已支持：
+	- Base 模型类型校验
+	- `ref_audio`/`ref_text` 参数校验
+	- prompt 序列化为纯 dict（仅含 Tensor + Python 基本类型），绕过 PyTorch >= 2.4 `weights_only=True` 限制
+	- prompt 元数据写入 `voice_prompts` 表
+- `POST /api/v1/tts/generate` 的 prompt 读取增加了 `weights_only=True` 与受控异常返回。
+- 已通过真实 Base 模型 HTTP 验收（含模拟重启）：
+	- `extract_prompt` 返回 `200`，`.pt` 文件真实落盘（19405 bytes）
+	- `prompt_id` 复用生成返回 `200`，静态 URL 可访问 `audio/wav`
+	- 模拟重启后（重新初始化 store + manager）同一 `prompt_id` 仍返回 `200`
+	- 损坏 `.pt` 文件后生成返回受控错误 `400`
 
 ### 已阅读和确认的核心文件
 
@@ -155,6 +172,6 @@
 
 ## 下一步建议方向
 
-1. 进入 Phase 5：落地 Base 音色提取与 prompt 库复用。
+1. 进入 Phase 6：落地调度器与训练任务状态机。
 2. 评估 0.6B 模型在本机的推理速度、显存占用和接口行为差异。
 3. 把当前 Gradio 入口逐步改为纯 HTTP 客户端，统一走 FastAPI。

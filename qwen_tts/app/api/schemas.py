@@ -34,6 +34,23 @@ class VoicePromptSummary(BaseModel):
     prompt_file: str
 
 
+class VoicePromptExtractRequest(BaseModel):
+    model_id: int
+    ref_audio: str
+    ref_text: Optional[str] = None
+    x_vector_only_mode: bool = False
+    name: Optional[str] = None
+
+
+class VoicePromptExtractResponse(BaseModel):
+    prompt_id: int
+    model_id: int
+    model_type: str
+    prompt_name: str
+    prompt_file: str
+    ref_text: Optional[str] = None
+
+
 class TTSGenerateRequest(BaseModel):
     model_id: int
     text: str | list[str]

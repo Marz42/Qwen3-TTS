@@ -516,6 +516,11 @@ app/
 
 ## 阶段 5：落地 Base 音色提取与音色库复用
 
+### 状态
+
+- 已完成（2026-05-08）。
+- 已通过真实 Base 模型完成全路径验收，含模拟重启后 `prompt_id` 复用与受控错误验证。
+
 ### 对应架构层
 
 - 第 4 层：模型和克隆音色库管理
@@ -555,6 +560,34 @@ app/
 - 同一 prompt 可在服务重启后继续复用。
 - 模型类型校验和文件缺失校验都有效。
 - prompt 文件不与保存时的 GPU 设备强耦合。
+
+### 本轮实现说明
+
+- 已新增 `POST /api/v1/voices/extract_prompt`：
+   - 新增请求/响应 schema：`VoicePromptExtractRequest`、`VoicePromptExtractResponse`
+   - 接口校验 `model_id` 对应模型必须是 `base`
+   - 校验 `ref_audio` 必填；`x_vector_only_mode=False` 时 `ref_text` 必填
+- 已新增服务层 `qwen_tts/app/voice_service.py`：
+   - 通过 `model.create_voice_clone_prompt(...)` 提取 prompt
+   - 保存前递归将 prompt 结构内 Tensor 迁移到 CPU
+   - 使用 `torch.save(...)` 落盘到 `data/prompts/*.pt`
+   - 将 prompt 元数据写入 `voice_prompts` 表
+- 已强化 `POST /api/v1/tts/generate` 的 prompt 读取错误处理：
+   - 保持 `map_location="cpu"` 读取
+   - prompt 文件损坏或加载异常时返回受控 `400`
+- 已通过假模型 `TestClient` 窄验证（初轮）：
+   - `extract_prompt`（Base 模型）返回 `200`
+   - 非 Base 模型调用 `extract_prompt` 返回 `400`
+   - 通过 `prompt_id` 调用 `tts/generate` 返回 `200`
+   - 人工破坏 `.pt` 文件后再次生成返回 `400`（受控错误）
+- 已通过真实 Base 模型完成 HTTP 验收（含模拟重启）：
+   - `extract_prompt` 返回 `200`，`.pt` 文件落盘（19405 bytes）
+   - 通过 `prompt_id` 生成返回 `200`，静态 URL 可访问 `audio/wav`
+   - 模拟重启后（重新初始化 `MetadataStore` + `ModelManager`）同一 `prompt_id` 仍返回 `200`
+   - 损坏 `.pt` 文件后生成返回 `400`（受控错误）
+- 修复了 PyTorch >= 2.4 `weights_only=True` 默认行为导致的 `VoiceClonePromptItem` 无法 pickle 加载问题：
+   - 保存时将 `List[VoiceClonePromptItem]` 序列化为纯 dict（仅含 Tensor + Python 基本类型）
+   - 加载时用 `weights_only=True` 明确读取，随后重建 `VoiceClonePromptItem` 对象
 
 ---
 
