@@ -28,6 +28,7 @@ import numpy as np
 import torch
 
 from .. import Qwen3TTSModel, VoiceClonePromptItem
+from ..app import build_runtime_baseline
 
 
 def _title_case_display(s: str) -> str:
@@ -130,8 +131,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--concurrency",
         type=int,
-        default=16,
-        help="Gradio queue concurrency (default: 16).",
+        default=1,
+        help="Gradio queue concurrency (default: 1 for the Phase 0 single-flight GPU baseline).",
     )
 
     # HTTPS args
@@ -246,7 +247,9 @@ def _wav_to_gradio_audio(wav: np.ndarray, sr: int) -> Tuple[int, np.ndarray]:
         raise ValueError(
             "Generated audio contains NaN or Inf values. This usually indicates an unstable speech-tokenizer decode dtype."
         )
-    return sr, wav
+    wav = np.clip(wav, -1.0, 1.0)
+    pcm16 = np.rint(wav * 32767.0).astype(np.int16)
+    return sr, pcm16
 
 
 def _detect_model_kind(ckpt: str, tts: Qwen3TTSModel) -> str:
@@ -601,6 +604,7 @@ Upload a previously saved voice file, then synthesize new text.
 def main(argv=None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    baseline = build_runtime_baseline()
 
     if not args.checkpoint and not args.checkpoint_pos:
         parser.print_help()
@@ -632,7 +636,8 @@ def main(argv=None) -> int:
     if args.ssl_keyfile is not None:
         launch_kwargs["ssl_keyfile"] = args.ssl_keyfile
 
-    demo.queue(default_concurrency_limit=int(args.concurrency)).launch(**launch_kwargs)
+    concurrency_limit = baseline.validate_concurrency_limit(int(args.concurrency))
+    demo.queue(default_concurrency_limit=concurrency_limit).launch(**launch_kwargs)
     return 0
 
 

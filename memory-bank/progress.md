@@ -12,8 +12,69 @@
 - 已完成本地 Python 环境检查，并跑通最小 tokenizer 示例闭环。
 - 已升级为 CUDA-enabled torch，在 GTX 1660 上完成完整 TTS 推理验证。
 - 已定位并修复半精度下 speech tokenizer 产生全 NaN 波形的 bug，1.7B CustomVoice / VoiceDesign 音频现在可正常收听。
+- 已启动本地 MVP 实施，并完成 Phase 0、Phase 1、Phase 2 与 Phase 3。
+- 当前代码状态已具备运行基线模块、SQLite 元数据层、单例模型管理器、FastAPI 基础壳层，并已完成 Phase 4 验收。
 
 ## 本次已完成内容
+
+### MVP Phase 4 已完成验收
+
+- 新增 `qwen_tts/app/runtime.py`，固定本地运行基线：
+	- `data/pretrained_models/`
+	- `data/prompts/`
+	- `data/jobs/`
+	- `static/outputs/`
+	- `data/app_data.db`
+- 新增 `qwen_tts/app/metadata.py`，完成 SQLite 元数据层。
+- 新增 `qwen_tts/app/model_manager.py`，完成单例模型管理器。
+- 新增 `qwen_tts/app/api/`，完成 FastAPI 基础壳层。
+- 新增 `qwen_tts/app/tts_service.py` 与 `qwen_tts/app/api/routes/tts.py`，开始落地 Phase 4 通用生成接口。
+- `qwen_tts/cli/demo.py` 已对齐 Phase 0 的单 GPU 单飞行策略：默认 `concurrency=1`，且显式拒绝大于 1 的并发值。
+- 已完成数据库自动初始化逻辑，支持：
+	- `models` 表的创建、注册、查询
+	- `voice_prompts` 表的创建、注册、查询
+- 已完成模型管理控制面逻辑，支持：
+	- 同路径模型复用
+	- 切换路径时卸载旧模型并重载
+	- `gpu_lock` / 磁盘锁检查
+	- 非阻塞推理互斥
+	- 推理输出中的 `torch.Tensor` 递归转 CPU
+- 已用本地 SQLite 往返验证：
+	- 建表成功
+	- 2 条模型记录写入并读回成功
+	- 1 条 prompt 记录写入并读回成功
+- 已用假加载器完成 Phase 2 窄验证：
+	- 同路径重复加载只触发一次真实加载
+	- 切换路径会触发重载
+	- `gpu_lock=True` 时加载会返回受控错误
+	- 并发推理时第二个请求会收到明确拒绝
+- 已完成 Base 模型最小端到端验证：
+	- 使用 `Qwen/Qwen3-TTS-12Hz-1.7B-Base`
+	- 在 `cuda:0 + float16 + no flash attention` 配置下成功生成 1 条语音
+	- 输出文件为 `static/outputs/phase2_base_validation.wav`
+	- 输出波形已验证全有限值
+- 已完成 Phase 3 窄验证：
+	- `/health` 返回 `200`
+	- `/api/v1/models/list` 与 `/api/v1/voices/list` 返回结构化 JSON
+	- `ValueError` 会被统一映射为 `400`
+	- `/static/outputs/phase2_base_validation.wav` 可通过 FastAPI 静态挂载直接访问
+- 已完成 Phase 4 首轮窄验证：
+	- `POST /api/v1/tts/generate` 可按模型类型分流到 `custom_voice` / `voice_design` / `base`
+	- `custom_voice` 缺 `speaker` 会返回 `400`
+	- 生成结果可落盘并返回静态 URL，URL 可直接访问
+	- 输出目录回收机制生效：阈值为 3 时，连续 4 次生成后目录文件数保持 3
+- 已完成 Phase 4 真实模型 HTTP 验收：
+	- `custom_voice` / `voice_design` / `base` 三类真实模型请求均返回 `200`
+	- 真实验收序列为 `custom -> voice_design -> base -> custom`，用于覆盖切换路径
+	- 四个生成结果 URL 均可访问并返回 `audio/wav`
+- 已完成真实模型切换显存观测：
+	- `before_custom_http`: allocated/reserved = `0 / 0 MB`
+	- `after_custom_http`: allocated/reserved = `4316.84 / 4890 MB`
+	- `after_voice_design_http`: allocated/reserved = `4316.84 / 4324 MB`
+	- `after_base_http`: allocated/reserved = `4404.49 / 4424 MB`
+	- `after_custom_again_http`: allocated/reserved = `4316.84 / 4324 MB`
+	- 结论：切换后显存维持在稳定区间，未观察到随切换轮次线性累积。
+- 验证过程中生成的占位模型目录、prompt 文件和临时数据库已清理，当前保留的是正式目录骨架和实现代码。
 
 ### 已阅读和确认的核心文件
 
@@ -39,7 +100,7 @@
 
 ### 本地环境与运行验证
 
-- 当前工作区 Python 环境：`f:/Lab/Qwen3-TTS/.venv/Scripts/python.exe`（Python 3.13）
+- 当前工作区自动化验证环境：`d:/Repos/Qwen3-TTS-Research/.venv/Scripts/python.exe`（Python 3.12.9）
 - 安装了 CUDA 版 torch：`torch-2.11.0+cu128`、`torchaudio-2.11.0+cu128`
 - GPU：NVIDIA GeForce GTX 1660，6 GB VRAM，driver 596.36，CUDA 13.2
 - `torch.cuda.is_available()` 确认为 `True`
@@ -75,20 +136,25 @@
 - `memory-bank/architecture.md`：目录与文件职责说明。
 - `memory-bank/progress.md`：当前进展记录（本文件）。
 - `memory-bank/implementation-plan.md`：实施计划（已从根目录移入）。
+- `memory-bank/mvp-implementation-plan.md`：MVP 分阶段实施方案与状态对齐。
 - `memory-bank/gradio-demo-test-guide.md`：Gradio demo 测试指南，含根因分析和已验证配置。
 - `memory-bank/minimal_tokenizer_roundtrip.wav`：最小 tokenizer 闭环输出样本。
 - `memory-bank/audition-samples/`：人工试听样本目录。
+- `static/outputs/phase2_base_validation.wav`：Base 模型端到端验证输出样本。
+- `qwen_tts/app/runtime.py`：MVP Phase 0 运行基线模块。
+- `qwen_tts/app/metadata.py`：MVP Phase 1 SQLite 元数据层。
+- `qwen_tts/app/model_manager.py`：MVP Phase 2 单例模型管理器。
+- `qwen_tts/app/api/`：MVP Phase 3 FastAPI 基础骨架。
+- `qwen_tts/app/tts_service.py`：MVP Phase 4 通用 TTS 服务与分流逻辑。
 
 ## 当前仍未完成的事项
 
-- 尚未决定自己的应用形态（CLI 工具 / HTTP API / Web App / 桌面端）。
-- 尚未梳理 fork 与上游之间的同步策略。
-- 尚未验证 Base 模型（Voice Clone）端到端流程。
 - 尚未验证 0.6B 模型在本机的推理速度与显存占用。
+- 尚未把训练任务调度层接入到新的 MVP 基础模块中。
+- 尚未把 Gradio 从当前直连模型方式切到纯 HTTP 调 FastAPI。
 
 ## 下一步建议方向
 
-1. 确定自己的应用形态与首批功能边界（CustomVoice 优先）。
-2. 基于 Gradio demo 骨架，搭建独立的应用入口层（参数配置、日志、错误处理与 demo 解耦）。
-3. 评估 0.6B vs 1.7B 在 6 GB 显存下的实际运行指标，为选型提供数据支撑。
-4. 决定是否以及如何维护与上游 fork 的同步策略。
+1. 进入 Phase 5：落地 Base 音色提取与 prompt 库复用。
+2. 评估 0.6B 模型在本机的推理速度、显存占用和接口行为差异。
+3. 把当前 Gradio 入口逐步改为纯 HTTP 客户端，统一走 FastAPI。

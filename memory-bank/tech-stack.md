@@ -19,6 +19,9 @@
 - Python：项目主体语言。
 - setuptools + pyproject.toml：用于打包、安装和发布 `qwen-tts` Python 包。
 - MANIFEST.in：控制发布包需要包含的非 Python 资源。
+- pathlib：当前 MVP 运行期目录布局和本地路径规范统一基于标准库路径抽象。
+- sqlite3：当前 MVP 元数据层直接使用标准库 SQLite，而不是先引入 ORM。
+- threading：当前 MVP 的单例模型管理器使用标准库锁来约束单 GPU 单飞行推理。
 
 ### 2. 深度学习与模型框架
 
@@ -61,8 +64,14 @@
 
 - Gradio：本地 Demo UI 所使用的界面框架。
 - CLI：通过 `qwen-tts-demo` 命令启动 Demo。
+- FastAPI：当前 MVP API 壳层已经落地，用于健康检查、模型列表和音色列表。
+- FastAPI：Phase 4 已开始，当前已新增 `/api/v1/tts/generate` 的统一生成入口。
+- SQLite：当前 MVP 已用作本地模型库和音色 prompt 元数据存储。
+- 单例 Model Manager：当前 MVP 已使用应用层状态机统一模型复用、切换和 GPU 互斥访问。
+- Starlette StaticFiles：当前 FastAPI 已挂载 `/static`，用于暴露推理输出 wav 文件。
+- soundfile：Phase 4 生成接口通过该库将推理结果统一写入 WAV 文件。
 
-这说明仓库已经具备基础产品化入口，但目前仍偏研究/模型演示导向，不是完整业务应用。
+这说明仓库已经具备基础产品化入口，但目前仍偏研究/模型演示导向，不是完整业务应用。当前新增的 `qwen_tts/app/` 模块已经先后沉淀了运行基线、元数据层、单例模型管理器、FastAPI 壳层，并开始落地统一 TTS 服务层。
 
 ### 7. 模型与资源分发
 
@@ -89,3 +98,4 @@
 - 仓库对 Transformers 版本耦合较深，升级依赖时需要非常谨慎。
 - 12Hz tokenizer 是当前主线，应优先围绕它建设应用能力。
 - 现有微调链路偏研究脚本风格，若要产品化，通常还需要补服务层、配置管理、日志、错误处理和部署流程。
+- 由于 `pyproject.toml` 当前只打包 `qwen_tts*`，MVP 相关新代码优先放在 `qwen_tts/` 包内，而不是仓库根目录另起一个未打包模块。

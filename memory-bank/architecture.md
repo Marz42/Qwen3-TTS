@@ -2,13 +2,14 @@
 
 ## 总览
 
-这个仓库可以分成 5 个层次：
+这个仓库可以分成 6 个层次：
 
 1. 根目录工程文件：定义包、安装方式、文档和许可证。
-2. `qwen_tts/` 主包：核心推理能力、模型定义、tokenizer、CLI。
-3. `examples/`：官方推理示例与基本测试脚本。
-4. `finetuning/`：单说话人微调相关脚本。
-5. `memory-bank/`：我们为维护 fork 额外建立的知识记录区。
+2. 运行期本地资源目录：`data/` 和 `static/`。
+3. `qwen_tts/` 主包：核心推理能力、模型定义、tokenizer、CLI，以及新加入的 MVP 应用基础模块。
+4. `examples/`：官方推理示例与基本测试脚本。
+5. `finetuning/`：单说话人微调相关脚本。
+6. `memory-bank/`：我们为维护 fork 额外建立的知识记录区。
 
 ## 根目录
 
@@ -39,6 +40,17 @@
 
 - 根目录静态资源目录。
 - 当前主要用于项目展示材料，而不是运行时代码。
+
+### `data/`
+
+- 当前 MVP 运行期本地资源目录。
+- 已固定子目录包括：`pretrained_models/`、`prompts/`、`jobs/`。
+- `app_data.db` 也固定存放在这个目录下，由元数据层自动创建。
+
+### `static/`
+
+- 当前 MVP 运行期静态输出目录。
+- `static/outputs/` 预留给后续推理结果 WAV 文件。
 
 ### `memory-bank/`
 
@@ -104,6 +116,54 @@
 ## `qwen_tts/`
 
 这是项目主体包，外部用户主要通过这里提供的 API 和 CLI 使用仓库能力。
+
+### `qwen_tts/app/`
+
+- 这是当前 fork 新增的 MVP 应用基础模块。
+- 目标不是替代 `qwen_tts/inference/`，而是把本地服务化所需的运行基线和元数据能力先沉到可打包模块中。
+
+### `qwen_tts/app/runtime.py`
+
+- 定义 Phase 0 的运行基线。
+- 固定本地目录布局、默认推理参数、最小训练样本数、单 GPU 单飞行策略和锁文件路径。
+- 当前 Gradio demo 的并发约束已经对齐这里的默认策略。
+
+### `qwen_tts/app/metadata.py`
+
+- 定义 Phase 1 的 SQLite 元数据层。
+- 负责初始化 `data/app_data.db`。
+- 负责维护 `models` 和 `voice_prompts` 两张表。
+- 提供模型与 prompt 的注册、查询、按 ID 读取等最小服务接口。
+
+### `qwen_tts/app/model_manager.py`
+
+- 定义 Phase 2 的单例模型管理器。
+- 负责统一模型加载参数、模型复用、模型切换、卸载和显存缓存清理。
+- 负责维护 `current_model_path`、`model`、`gpu_lock`、`inference_lock` 等核心状态。
+- 负责把推理调用包进显式互斥区，并在返回前把 `torch.Tensor` 输出转成 CPU 侧对象。
+
+### `qwen_tts/app/api/`
+
+- 定义 Phase 3 的 FastAPI 壳层。
+- 当前已经提供应用工厂、统一异常处理、静态文件挂载，以及最小的健康检查和列表接口。
+
+### `qwen_tts/app/api/main.py`
+
+- 负责创建 FastAPI 应用、注入 `RuntimeBaseline`、`MetadataStore` 和 `ModelManager`。
+- 提供 `/health`，并挂载 `/static` 静态目录。
+- 统一把资源冲突、参数错误和未找到转换为稳定的 HTTP 错误响应。
+
+### `qwen_tts/app/api/routes/`
+
+- `models.py`：提供 `/api/v1/models/list`。
+- `voices.py`：提供 `/api/v1/voices/list`。
+- `tts.py`：提供 `/api/v1/tts/generate`，按模型类型分流到三类推理函数。
+
+### `qwen_tts/app/tts_service.py`
+
+- 定义 Phase 4 的通用 TTS 服务逻辑。
+- 负责 `custom_voice` / `voice_design` / `base` 三类模型分流。
+- 负责模型类型级别参数校验、可选 `prompt_id` 读取、输出 WAV 落盘和输出目录轻量回收。
 
 ### `qwen_tts/__init__.py`
 
