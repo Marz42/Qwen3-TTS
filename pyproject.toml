@@ -38,6 +38,8 @@ Repository = "https://github.com/Qwen/Qwen3-TTS"
 
 [project.scripts]
 qwen-tts-demo = "qwen_tts.cli.demo:main"
+qwen-tts-phase7-data-prep = "qwen_tts.cli.phase7_data_prep:main"
+qwen-tts-phase8-tts-gui = "qwen_tts.cli.phase8_tts_gui:main"
 
 [tool.setuptools]
 packages = { find = { where = ["."] , include = ["qwen_tts*"] } }

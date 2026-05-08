@@ -1,101 +1,53 @@
-# Qwen3-TTS Tech Stack
+# Qwen3-TTS Tech Stack (Fork Local)
 
-## 项目定位
+## 1. 语言与工程基础
 
-这个项目是一个基于大语言模型和离散语音 tokenizer 的文本转语音仓库，目标领域包括：
+- Python 3.12.x（当前本地已验证）
+- 打包：`setuptools` + `pyproject.toml`
+- 路径与文件：`pathlib`
+- 本地数据库：`sqlite3`
+- 并发控制：`threading`
+- 子进程调度：`subprocess`
 
-- 文本转语音（TTS）
-- 声音克隆（Voice Clone）
-- 声音设计（Voice Design）
-- 指令控制语音生成（Instruction-controlled speech generation）
-- 语音离散编码与解码（Speech Tokenization / Codec）
-- 单说话人微调（Single-speaker fine-tuning）
-- 本地 Demo 与应用原型搭建
+## 2. AI 与训练推理栈
 
-## 主要技术栈
+- `torch` / `torchaudio`
+- `transformers==4.57.3`（锁定）
+- `accelerate`
+- `safetensors`
 
-### 1. 语言与工程基础
+## 3. 音频处理栈
 
-- Python：项目主体语言。
-- setuptools + pyproject.toml：用于打包、安装和发布 `qwen-tts` Python 包。
-- MANIFEST.in：控制发布包需要包含的非 Python 资源。
-- pathlib：当前 MVP 运行期目录布局和本地路径规范统一基于标准库路径抽象。
-- sqlite3：当前 MVP 元数据层直接使用标准库 SQLite，而不是先引入 ORM。
-- threading：当前 MVP 的单例模型管理器使用标准库锁来约束单 GPU 单飞行推理。
+- `librosa`
+- `soundfile`
+- `sox`
+- `numpy`
 
-### 2. 深度学习与模型框架
+## 4. 服务与界面栈
 
-- PyTorch：核心训练与推理框架。
-- Transformers 4.57.3：项目最核心的模型加载、配置注册、Processor、AutoModel/AutoConfig 体系都依赖它。
-- Accelerate：用于微调脚本中的多卡或混合精度训练封装。
-- safetensors：用于保存微调后的模型权重。
+- FastAPI（MVP API 层）
+- Gradio（Phase 7/8 GUI 层）
+- Starlette StaticFiles（输出音频静态访问）
 
-这个仓库不是一个通用 Web 应用仓库，而是一个高度依赖 Hugging Face 生态的模型仓库。`Qwen3TTSModel` 和 `Qwen3TTSTokenizer` 都是围绕 Transformers 的 `from_pretrained` 风格封装出来的推理接口。
+## 5. 项目主能力对象
 
-### 3. 语音处理相关库
+- `Qwen3TTSModel`
+- `Qwen3TTSTokenizer`
 
-- librosa：音频加载、重采样。
-- torchaudio：音频相关依赖。
-- soundfile：读写 wav 音频文件。
-- sox：音频处理依赖。
-- numpy：音频数组与中间张量转换。
+## 6. 架构性技术事实
 
-### 4. 推理与模型能力
+- 12Hz tokenizer 是当前主线。
+- 训练与推理统一受单 GPU 单飞行策略约束。
+- 模型加载由 `ModelManager` 统一管控，不走分散式加载。
+- 任务状态机与磁盘锁由 `JobManager` 管控。
 
-- Qwen3TTSModel：统一封装 3 类 TTS 能力。
-  - Custom Voice
-  - Voice Design
-  - Voice Clone
-- Qwen3TTSTokenizer：统一封装 12Hz 和 25Hz 两套语音 tokenizer 的 encode/decode。
-- 12Hz tokenizer：当前主线 tokenizer，采用多 codebook 离散语音表示。
-- 25Hz tokenizer：较旧一代 tokenizer，保留了 x-vector 和 mel 等附加条件信息。
+## 7. 当前限制
 
-### 5. 模型架构要点
+- 本机未安装 `flash-attn`，真实训练吞吐不在当前验收范围。
+- 真实 ASR（SenseVoice-Small）未接入，Phase 7 采用占位 ASR + 人工修订。
+- `transformers` 版本不建议在 MVP 收口后随意升级。
 
-- 主 TTS 模型：位于 `qwen_tts/core/models/`，包含配置、主模型和文本 processor。
-- 文本侧：使用 Qwen 系列 tokenizer 与 chat template 风格输入格式。
-- 说话人建模：包含 speaker encoder，用参考音频提取说话人表征。
-- codec/token 侧：通过离散语音 token 进行生成与还原。
-- 子说话器 / code predictor：用于预测多路 codec token。
+## 8. 依赖变更原则
 
-从实现上看，这是一个“文本 token + 语音 codec token + 说话人条件”的联合生成系统，而不是传统的“文本前端 + 声学模型 + vocoder”松耦合三段式工程。
-
-### 6. 应用与交互层
-
-- Gradio：本地 Demo UI 所使用的界面框架。
-- CLI：通过 `qwen-tts-demo` 命令启动 Demo。
-- FastAPI：当前 MVP API 壳层已经落地，用于健康检查、模型列表和音色列表。
-- FastAPI：Phase 4 已开始，当前已新增 `/api/v1/tts/generate` 的统一生成入口。
-- SQLite：当前 MVP 已用作本地模型库和音色 prompt 元数据存储。
-- 单例 Model Manager：当前 MVP 已使用应用层状态机统一模型复用、切换和 GPU 互斥访问。
-- Starlette StaticFiles：当前 FastAPI 已挂载 `/static`，用于暴露推理输出 wav 文件。
-- soundfile：Phase 4 生成接口通过该库将推理结果统一写入 WAV 文件。
-
-这说明仓库已经具备基础产品化入口，但目前仍偏研究/模型演示导向，不是完整业务应用。当前新增的 `qwen_tts/app/` 模块已经先后沉淀了运行基线、元数据层、单例模型管理器、FastAPI 壳层，并开始落地统一 TTS 服务层。
-
-### 7. 模型与资源分发
-
-- Hugging Face Hub：模型下载与 `from_pretrained` 加载主通道。
-- ModelScope：国内镜像和替代下载源。
-- README 中提供了两套模型下载方式。
-
-### 8. 性能与硬件相关技术
-
-- FlashAttention 2：README 和示例都推荐开启，用于降低显存占用和提升推理性能。
-- bfloat16 / float16：主要建议的推理与训练数据类型。
-- CUDA：示例默认按 GPU 环境编写。
-
-## 技术栈结论
-
-如果要维护这个 fork 并在此基础上做自己的应用，可以把它理解为三层：
-
-1. 模型层：PyTorch + Transformers + 自定义 Qwen3 TTS 模型与 tokenizer。
-2. 能力层：推理封装、语音编码解码、声音克隆、声音设计、微调脚本。
-3. 应用层：CLI、Gradio Demo、未来你们自己的服务接口或业务产品。
-
-对后续维护最关键的技术事实有三点：
-
-- 仓库对 Transformers 版本耦合较深，升级依赖时需要非常谨慎。
-- 12Hz tokenizer 是当前主线，应优先围绕它建设应用能力。
-- 现有微调链路偏研究脚本风格，若要产品化，通常还需要补服务层、配置管理、日志、错误处理和部署流程。
-- 由于 `pyproject.toml` 当前只打包 `qwen_tts*`，MVP 相关新代码优先放在 `qwen_tts/` 包内，而不是仓库根目录另起一个未打包模块。
+- 先在 `examples/test_phase6_job_manager.py`、`examples/test_phase7_data_prep.py`、`examples/test_phase8_tts_gui.py`、`examples/test_phase9_e2e_checklist.py` 验证。
+- 任何升级若影响 `from_pretrained` 或 tokenizer decode 路径，视为高风险变更。

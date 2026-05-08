@@ -118,3 +118,31 @@ class JobStatusResponse(BaseModel):
     input_jsonl: str
     prepared_jsonl: str
     log_tail: Optional[str] = None
+
+
+class DataPrepSample(BaseModel):
+    audio: str
+    text: str
+    asr_text: Optional[str] = None
+
+
+class BuildTrainJsonlRequest(BaseModel):
+    samples: list[DataPrepSample]
+    output_name: Optional[str] = None
+
+
+class BuildTrainJsonlResponse(BaseModel):
+    output_jsonl: str
+    sample_count: int
+
+
+class CollectSamplesRequest(BaseModel):
+    audio_files: list[str] = []
+    archives: list[str] = []
+    use_asr_placeholder: bool = True
+
+
+class CollectSamplesResponse(BaseModel):
+    samples: list[DataPrepSample]
+    sample_count: int
+    imported_dir: Optional[str] = None

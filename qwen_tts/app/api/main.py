@@ -39,7 +39,7 @@ from ..model_manager import (
     build_model_manager,
 )
 from ..runtime import RuntimeBaseline, build_runtime_baseline, ensure_phase0_layout
-from .routes import jobs_router, models_router, tts_router, voices_router
+from .routes import data_prep_router, jobs_router, models_router, tts_router, voices_router
 from .schemas import ErrorResponse, HealthResponse
 
 
@@ -72,6 +72,7 @@ def create_app(
     app.include_router(voices_router)
     app.include_router(tts_router)
     app.include_router(jobs_router)
+    app.include_router(data_prep_router)
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:

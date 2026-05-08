@@ -1,326 +1,71 @@
-# Qwen3-TTS Architecture
+# Qwen3-TTS Architecture (Fork Local)
 
-## 总览
+## 1. 仓库分层
 
-这个仓库可以分成 6 个层次：
+1. 根目录工程层：`pyproject.toml`、`README.md`、许可证与依赖定义。
+2. 核心包层：`qwen_tts/`（推理、模型、tokenizer、CLI、MVP app）。
+3. 微调脚本层：`finetuning/`（单说话人训练链路）。
+4. 示例与验收层：`examples/`（Phase 6-9 脚本化验证）。
+5. 运行资源层：`data/` 与 `static/`。
+6. 维护文档层：`memory-bank/`。
 
-1. 根目录工程文件：定义包、安装方式、文档和许可证。
-2. 运行期本地资源目录：`data/` 和 `static/`。
-3. `qwen_tts/` 主包：核心推理能力、模型定义、tokenizer、CLI，以及新加入的 MVP 应用基础模块。
-4. `examples/`：官方推理示例与基本测试脚本。
-5. `finetuning/`：单说话人微调相关脚本。
-6. `memory-bank/`：我们为维护 fork 额外建立的知识记录区。
+## 2. MVP 代码结构
 
-## 根目录
+### 2.1 运行基线
 
-### `LICENSE`
+- `qwen_tts/app/runtime.py`
+- 负责目录布局、默认推理参数、训练样本下限、输出清理策略。
 
-- Apache-2.0 许可证。
-- 对 fork 和二次开发友好。
+### 2.2 元数据层
 
-### `MANIFEST.in`
+- `qwen_tts/app/metadata.py`
+- SQLite 两张表：`models`、`voice_prompts`。
 
-- 控制发布 Python 包时需要带上的附加资源。
-- 对这类包含模型辅助资源的项目很重要。
+### 2.3 模型管理层
 
-### `pyproject.toml`
+- `qwen_tts/app/model_manager.py`
+- 单例模型管理、模型切换、推理互斥、GPU busy 检查。
 
-- 项目的 Python 打包入口。
-- 定义包名 `qwen-tts`、版本、依赖、Python 版本范围。
-- 声明 CLI 命令：`qwen-tts-demo`。
-- 指定 setuptools 自动发现 `qwen_tts*` 包。
+### 2.4 服务层
 
-### `README.md`
+- `qwen_tts/app/tts_service.py`
+- `qwen_tts/app/voice_service.py`
+- 统一分发 `custom_voice` / `voice_design` / `base` 调用。
 
-- 项目的总入口文档。
-- 介绍模型能力、安装方式、示例调用、Demo 启动、vLLM 使用和微调流程。
-- 是理解仓库定位和官方推荐用法的第一优先级文档。
+### 2.5 调度层
 
-### `assets/`
+- `qwen_tts/app/job_manager.py`
+- 训练任务状态机、日志落盘、锁恢复、模型回流注册。
 
-- 根目录静态资源目录。
-- 当前主要用于项目展示材料，而不是运行时代码。
+### 2.6 API 层
 
-### `data/`
+- `qwen_tts/app/api/main.py`
+- `qwen_tts/app/api/routes/`
+- 路由：`models`、`voices`、`tts`、`jobs`、`data_prep`。
 
-- 当前 MVP 运行期本地资源目录。
-- 已固定子目录包括：`pretrained_models/`、`prompts/`、`jobs/`。
-- `app_data.db` 也固定存放在这个目录下，由元数据层自动创建。
+### 2.7 GUI 层
 
-### `static/`
+- `qwen_tts/cli/phase7_data_prep.py`
+- `qwen_tts/cli/phase8_tts_gui.py`
+- 原始 demo：`qwen_tts/cli/demo.py`
 
-- 当前 MVP 运行期静态输出目录。
-- `static/outputs/` 预留给后续推理结果 WAV 文件。
+## 3. 数据与文件布局
 
-### `memory-bank/`
+- `data/app_data.db`：SQLite 元数据
+- `data/pretrained_models/`：本地模型目录
+- `data/prompts/`：prompt 文件
+- `data/jobs/`：任务目录与 `gpu.lock`
+- `data/datasets/`：训练数据与导入目录
+- `static/outputs/`：推理输出 wav
 
-- 当前 fork 的知识沉淀目录。
-- 用于记录技术栈、架构、进展、计划等长期维护信息。
+## 4. 关键控制点
 
-## `examples/`
+- 单 GPU 单飞行：训练与推理互斥。
+- 训练锁：磁盘锁优先，避免重启状态丢失。
+- Prompt 可移植性：保存时 CPU 化，读取用 `weights_only=True` + 重建。
+- 输出清理：按阈值删除最旧 wav，防止目录膨胀。
 
-这个目录的脚本不是单元测试框架，而是“可直接运行的能力验证脚本”。它们更像示例程序和手工验证入口。
+## 5. 当前架构状态
 
-### `examples/test_model_12hz_base.py`
-
-- 演示 12Hz Base 模型的声音克隆能力。
-- 覆盖单条和批量输入。
-- 同时演示直接生成和先构造 `voice_clone_prompt` 再生成两种调用方式。
-
-### `examples/test_model_12hz_custom_voice.py`
-
-- 演示 CustomVoice 模型的受控语音生成。
-- 输入包括文本、语言、说话人、可选指令。
-
-### `examples/test_model_12hz_voice_design.py`
-
-- 演示 VoiceDesign 模型根据自然语言描述生成目标声音。
-- 适合验证风格控制与描述驱动合成。
-
-### `examples/test_tokenizer_12hz.py`
-
-- 演示 12Hz tokenizer 的 encode/decode。
-- 覆盖字符串音频源、批量输入、dict 形式解码、numpy 输入等多种调用形式。
-
-## `finetuning/`
-
-这个目录是一套单说话人微调流水线，目标是基于 Base 模型训练出新的自定义说话人能力。
-
-### `finetuning/README.md`
-
-- 说明微调使用方式。
-- 定义输入 JSONL 格式。
-- 说明数据准备、训练命令和训练后推理验证。
-- 明确当前只支持单说话人微调。
-
-### `finetuning/prepare_data.py`
-
-- 数据预处理脚本。
-- 读取原始 JSONL，使用 `Qwen3TTSTokenizer` 提取训练音频的 `audio_codes`。
-- 输出带 `audio_codes` 的新 JSONL，为 SFT 做准备。
-
-### `finetuning/dataset.py`
-
-- 定义 `TTSDataset`。
-- 负责把文本、参考音频、离散音频码拼装成训练样本。
-- 负责提取参考 mel，并构造训练时需要的各种 mask、label 和输入张量。
-
-### `finetuning/sft_12hz.py`
-
-- 单说话人 SFT 训练主脚本。
-- 用 Accelerate 封装训练流程。
-- 从 Base 模型加载初始化权重。
-- 训练后写出 checkpoint，并把输出模型改写为 `custom_voice` 类型配置。
-- 同时把目标说话人 embedding 写入权重中。
-
-## `qwen_tts/`
-
-这是项目主体包，外部用户主要通过这里提供的 API 和 CLI 使用仓库能力。
-
-### `qwen_tts/app/`
-
-- 这是当前 fork 新增的 MVP 应用基础模块。
-- 目标不是替代 `qwen_tts/inference/`，而是把本地服务化所需的运行基线和元数据能力先沉到可打包模块中。
-
-### `qwen_tts/app/runtime.py`
-
-- 定义 Phase 0 的运行基线。
-- 固定本地目录布局、默认推理参数、最小训练样本数、单 GPU 单飞行策略和锁文件路径。
-- 当前 Gradio demo 的并发约束已经对齐这里的默认策略。
-
-### `qwen_tts/app/metadata.py`
-
-- 定义 Phase 1 的 SQLite 元数据层。
-- 负责初始化 `data/app_data.db`。
-- 负责维护 `models` 和 `voice_prompts` 两张表。
-- 提供模型与 prompt 的注册、查询、按 ID 读取等最小服务接口。
-
-### `qwen_tts/app/model_manager.py`
-
-- 定义 Phase 2 的单例模型管理器。
-- 负责统一模型加载参数、模型复用、模型切换、卸载和显存缓存清理。
-- 负责维护 `current_model_path`、`model`、`gpu_lock`、`inference_lock` 等核心状态。
-- 负责把推理调用包进显式互斥区，并在返回前把 `torch.Tensor` 输出转成 CPU 侧对象。
-
-### `qwen_tts/app/api/`
-
-- 定义 Phase 3 的 FastAPI 壳层。
-- 当前已经提供应用工厂、统一异常处理、静态文件挂载，以及最小的健康检查和列表接口。
-
-### `qwen_tts/app/api/main.py`
-
-- 负责创建 FastAPI 应用、注入 `RuntimeBaseline`、`MetadataStore` 和 `ModelManager`。
-- 提供 `/health`，并挂载 `/static` 静态目录。
-- 统一把资源冲突、参数错误和未找到转换为稳定的 HTTP 错误响应。
-
-### `qwen_tts/app/api/routes/`
-
-- `models.py`：提供 `/api/v1/models/list`。
-- `voices.py`：提供 `/api/v1/voices/list`。
-- `tts.py`：提供 `/api/v1/tts/generate`，按模型类型分流到三类推理函数。
-
-### `qwen_tts/app/tts_service.py`
-
-- 定义 Phase 4 的通用 TTS 服务逻辑。
-- 负责 `custom_voice` / `voice_design` / `base` 三类模型分流。
-- 负责模型类型级别参数校验、可选 `prompt_id` 读取、输出 WAV 落盘和输出目录轻量回收。
-
-### `qwen_tts/__init__.py`
-
-- 对外导出主 API：
-  - `Qwen3TTSModel`
-  - `VoiceClonePromptItem`
-  - `Qwen3TTSTokenizer`
-- 这是外部 `from qwen_tts import ...` 的主要入口。
-
-### `qwen_tts/__main__.py`
-
-- 包级入口。
-- 直接执行 `python -m qwen_tts` 时只打印提示信息，引导用户使用 CLI 命令。
-
-## `qwen_tts/cli/`
-
-### `qwen_tts/cli/demo.py`
-
-- Gradio Demo 的实现。
-- 负责命令行参数解析、模型加载、UI 构建和事件绑定。
-- 根据不同 checkpoint 自动判断模型类型，并切换对应交互界面。
-- 是当前仓库离“应用”最近的一层。
-
-## `qwen_tts/inference/`
-
-这个目录提供最重要的推理封装，作用是把底层模型封装成更稳定、可复用的业务接口。
-
-### `qwen_tts/inference/qwen3_tts_model.py`
-
-- `Qwen3TTSModel` 的实现。
-- 对 Hugging Face 的 `from_pretrained` 做一层业务封装。
-- 负责：
-  - 注册自定义 config/model/processor
-  - 加载模型和 processor
-  - 音频输入标准化
-  - 语言/说话人校验
-  - 语音克隆 prompt 构造
-  - CustomVoice / VoiceDesign / VoiceClone 三种生成接口
-
-### `qwen_tts/inference/qwen3_tts_tokenizer.py`
-
-- `Qwen3TTSTokenizer` 的实现。
-- 对 12Hz/25Hz tokenizer 做统一接口封装。
-- 负责音频加载、重采样、编码、解码和输入输出格式兼容。
-
-## `qwen_tts/core/`
-
-这个目录是底层模型定义层，维护 fork 时通常在这里做最底层修改。
-
-### `qwen_tts/core/__init__.py`
-
-- 汇总导出 12Hz 和 25Hz tokenizer 的 config/model 类。
-- 方便上层统一注册到 Hugging Face Auto 类体系中。
-
-## `qwen_tts/core/models/`
-
-这是主 TTS 模型定义目录。
-
-### `qwen_tts/core/models/__init__.py`
-
-- 导出主模型相关三类对象：
-  - `Qwen3TTSConfig`
-  - `Qwen3TTSForConditionalGeneration`
-  - `Qwen3TTSProcessor`
-
-### `qwen_tts/core/models/configuration_qwen3_tts.py`
-
-- 定义主模型配置。
-- 包含 speaker encoder、talker、code predictor 等多种子配置。
-- 用于描述整个 TTS 生成模型的结构参数。
-
-### `qwen_tts/core/models/modeling_qwen3_tts.py`
-
-- 主 TTS 模型实现文件。
-- 定义条件生成逻辑、说话人编码器、talker 相关模块、生成流程以及辅助函数。
-- 这是仓库中最核心也最复杂的模型代码之一。
-
-### `qwen_tts/core/models/processing_qwen3_tts.py`
-
-- 文本 processor 实现。
-- 基于 Qwen tokenizer 封装文本输入处理。
-- 负责 padding、批处理和 chat template 兼容。
-
-## `qwen_tts/core/tokenizer_12hz/`
-
-这是当前主线语音 tokenizer 实现目录。
-
-### `qwen_tts/core/tokenizer_12hz/configuration_qwen3_tts_tokenizer_v2.py`
-
-- 12Hz tokenizer 的配置定义。
-- 包含 encoder 与 decoder 的子配置。
-- 说明输入采样率、输出采样率、量化器数量等关键超参数。
-
-### `qwen_tts/core/tokenizer_12hz/modeling_qwen3_tts_tokenizer_v2.py`
-
-- 12Hz tokenizer 的模型实现。
-- 基于 `MimiModel` 和自定义 decoder 结构。
-- 提供音频编码输出 `audio_codes`，以及由离散码恢复波形的逻辑。
-
-## `qwen_tts/core/tokenizer_25hz/`
-
-这是较旧一代 tokenizer 实现目录，目前更多是兼容和保留用途。
-
-### `qwen_tts/core/tokenizer_25hz/configuration_qwen3_tts_tokenizer_v1.py`
-
-- 25Hz tokenizer 的配置定义。
-- 包括 encoder、DiT decoder、BigVGAN decoder 等配置。
-
-### `qwen_tts/core/tokenizer_25hz/modeling_qwen3_tts_tokenizer_v1.py`
-
-- 25Hz tokenizer 的主模型实现。
-- 除离散码外，还包含 x-vector 和参考 mel 等额外条件信息。
-
-### `qwen_tts/core/tokenizer_25hz/vq/`
-
-- 25Hz tokenizer 使用的低层语音向量量化子模块。
-
-#### `qwen_tts/core/tokenizer_25hz/vq/core_vq.py`
-
-- 向量量化核心实现。
-- 提供 codec 离散化过程中需要的基础 VQ 组件。
-
-#### `qwen_tts/core/tokenizer_25hz/vq/speech_vq.py`
-
-- 语音向量量化封装。
-- 包含语音编码器量化逻辑和 x-vector 提取相关能力。
-
-#### `qwen_tts/core/tokenizer_25hz/vq/whisper_encoder.py`
-
-- 与 Whisper 风格编码器相关的声学特征提取与辅助逻辑。
-
-#### `qwen_tts/core/tokenizer_25hz/vq/assets/`
-
-- 25Hz tokenizer 的静态资源目录。
-
-##### `qwen_tts/core/tokenizer_25hz/vq/assets/mel_filters.npz`
-
-- mel filter bank 资源文件。
-- 用于声学特征提取时的滤波器参数。
-
-## 当前架构理解
-
-从维护视角看，这个仓库有两条主线：
-
-1. 推理主线：`qwen_tts/inference` + `qwen_tts/core` + `examples` + `cli/demo.py`
-2. 微调主线：`finetuning` + `qwen_tts/core` + `qwen_tts/inference`
-
-如果后续要做你们自己的应用，最可能复用的是：
-
-- `Qwen3TTSModel`
-- `Qwen3TTSTokenizer`
-- `qwen_tts/cli/demo.py` 里的交互逻辑思路
-
-最可能需要重构的是：
-
-- 服务化接口层
-- 配置管理
-- 模型下载与缓存策略
-- 错误处理与日志
-- 微调脚本的工程化程度
+- Phase 0-9 已按方案实现并完成脚本化验收。
+- Phase 9 脚本：`examples/test_phase9_e2e_checklist.py`。
