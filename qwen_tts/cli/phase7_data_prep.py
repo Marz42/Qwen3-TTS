@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
-from typing import Any, List
+from typing import Any
 from urllib import error, request
 
 import gradio as gr
@@ -37,6 +37,41 @@ def _build_rows(files: list[Any] | None) -> list[list[str]]:
         path = getattr(f, "name", None) or str(f)
         rows.append([path, "", ""])
     return rows
+
+
+def _normalize_table_rows(table_rows: Any) -> list[list[str]]:
+    if table_rows is None:
+        return []
+    if hasattr(table_rows, "values") and hasattr(table_rows, "columns"):
+        return [list(row) for row in table_rows.values.tolist()]
+    if isinstance(table_rows, list):
+        return [list(row) if isinstance(row, tuple) else row for row in table_rows]
+    return list(table_rows)
+
+
+def _resolve_trainable_base_models(api_base: str) -> tuple[list[str], dict[str, int]]:
+    endpoint = api_base.rstrip("/") + "/api/v1/models/list"
+    models = _http_json("GET", endpoint)
+
+    labels: list[str] = []
+    mapping: dict[str, int] = {}
+    for item in models:
+        if item.get("type") != "base":
+            continue
+        label = f"{item['id']} | {item['name']}"
+        labels.append(label)
+        mapping[label] = int(item["id"])
+    return labels, mapping
+
+
+def _refresh_base_models(api_base: str):
+    labels, mapping = _resolve_trainable_base_models(api_base)
+    value = labels[0] if labels else None
+    if labels:
+        msg = f"已加载可训练 base 模型 {len(labels)} 个。"
+    else:
+        msg = "当前没有已登记的 base 模型，无法提交训练。"
+    return gr.update(choices=labels, value=value), mapping, msg
 
 
 def _collect_samples(
@@ -88,7 +123,7 @@ def _collect_samples(
 
 
 def _save_train_jsonl(api_base: str, output_name: str, table_rows: list[list[str]] | None) -> tuple[str, str]:
-    rows = table_rows or []
+    rows = _normalize_table_rows(table_rows)
     samples = []
     for idx, row in enumerate(rows):
         if not row or len(row) < 2:
@@ -122,7 +157,8 @@ def _save_train_jsonl(api_base: str, output_name: str, table_rows: list[list[str
 
 def _submit_training(
     api_base: str,
-    base_model_id: int,
+    base_model_label: str | None,
+    base_model_map: dict[str, int],
     speaker_name: str,
     input_jsonl: str,
     num_epochs: int,
@@ -130,12 +166,13 @@ def _submit_training(
     lr: float,
 ) -> tuple[str, str]:
     if not input_jsonl.strip():
-        return "", "请先生成 train_raw.jsonl。"
-    if base_model_id <= 0:
-        return "", "base_model_id 必须大于 0。"
+        return "", "请先生成或手动填写 train_raw.jsonl 路径。"
+    if not base_model_label or base_model_label not in base_model_map:
+        return "", "请先选择一个可训练的 base 模型。"
     if not speaker_name.strip():
         return "", "speaker_name 不能为空。"
 
+    base_model_id = base_model_map[base_model_label]
     payload = {
         "base_model_id": int(base_model_id),
         "speaker_name": speaker_name.strip(),
@@ -192,6 +229,7 @@ def create_phase7_data_prep_demo(default_api_base: str = "http://127.0.0.1:8010"
 """)
 
         api_base = gr.Textbox(label="FastAPI Base URL", value=default_api_base)
+        base_model_map = gr.State({})
 
         with gr.Row():
             upload_files = gr.Files(label="上传音频文件（支持多选）", file_count="multiple", file_types=["audio"])
@@ -206,17 +244,19 @@ def create_phase7_data_prep_demo(default_api_base: str = "http://127.0.0.1:8010"
         samples_table = gr.Dataframe(
             headers=["audio", "text", "asr_text"],
             datatype=["str", "str", "str"],
+            type="array",
             row_count=(0, "dynamic"),
             col_count=(3, "fixed"),
             label="样本表（可编辑）",
         )
 
         save_jsonl_btn = gr.Button("2) 通过 HTTP 生成 train_raw.jsonl")
-        jsonl_path = gr.Textbox(label="train_raw.jsonl 路径")
+        jsonl_path = gr.Textbox(label="train_raw.jsonl 路径（可手填）")
         save_msg = gr.Textbox(label="JSONL 生成结果")
 
         with gr.Row():
-            base_model_id = gr.Number(label="base_model_id", value=1, precision=0)
+            refresh_base_models_btn = gr.Button("刷新可训练 base 模型")
+            base_model = gr.Dropdown(label="可训练的 base 模型", choices=[], value=None)
             speaker_name = gr.Textbox(label="speaker_name", value="speaker_phase7")
             num_epochs = gr.Number(label="num_epochs", value=3, precision=0)
             batch_size = gr.Number(label="batch_size", value=2, precision=0)
@@ -235,6 +275,18 @@ def create_phase7_data_prep_demo(default_api_base: str = "http://127.0.0.1:8010"
             outputs=[samples_table, save_msg],
         )
 
+        refresh_base_models_btn.click(
+            fn=_refresh_base_models,
+            inputs=[api_base],
+            outputs=[base_model, base_model_map, submit_msg],
+        )
+
+        demo.load(
+            fn=_refresh_base_models,
+            inputs=[api_base],
+            outputs=[base_model, base_model_map, submit_msg],
+        )
+
         save_jsonl_btn.click(
             fn=_save_train_jsonl,
             inputs=[api_base, output_name, samples_table],
@@ -243,7 +295,7 @@ def create_phase7_data_prep_demo(default_api_base: str = "http://127.0.0.1:8010"
 
         submit_train_btn.click(
             fn=_submit_training,
-            inputs=[api_base, base_model_id, speaker_name, jsonl_path, num_epochs, batch_size, lr],
+            inputs=[api_base, base_model, base_model_map, speaker_name, jsonl_path, num_epochs, batch_size, lr],
             outputs=[job_id, submit_msg],
         )
 

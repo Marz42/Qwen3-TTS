@@ -108,9 +108,11 @@ def main() -> int:
         body0 = r0.json()
         assert body0["sample_count"] == 5, body0
         assert body0.get("imported_dir"), body0
+        imported_dir = Path(body0["imported_dir"])
         samples = body0["samples"]
         assert all(s.get("asr_text") for s in samples), samples
         assert all(Path(s["audio"]).is_file() for s in samples), samples
+        assert all(imported_dir in Path(s["audio"]).parents or Path(s["audio"]) == imported_dir for s in samples), samples
         print("[PASS] collect_samples (audio + zip)")
 
         payload = {

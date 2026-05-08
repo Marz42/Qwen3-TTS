@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +36,30 @@ def _make_asr_placeholder(path: Path) -> str:
     return re.sub(r"[_\-]+", " ", path.stem).strip()
 
 
+def _make_import_dir(*, baseline) -> Path:
+    imports_root = baseline.paths.data_dir / "datasets" / "imports"
+    imports_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    imported_dir = imports_root / f"import_{stamp}"
+    imported_dir.mkdir(parents=True, exist_ok=True)
+    return imported_dir
+
+
+def _copy_into_import_dir(source: Path, imported_dir: Path) -> Path:
+    safe_name = source.name
+    if not safe_name:
+        raise ValueError(f"Invalid source file name: {source}")
+
+    target = imported_dir / safe_name
+    dedupe_idx = 1
+    while target.exists():
+        target = imported_dir / f"{source.stem}_{dedupe_idx}{source.suffix}"
+        dedupe_idx += 1
+
+    shutil.copy2(source, target)
+    return target.resolve()
+
+
 def _collect_audio_candidates(
     *,
     baseline,
@@ -42,6 +67,7 @@ def _collect_audio_candidates(
     archives: list[str],
 ) -> tuple[list[Path], Path | None]:
     candidates: list[Path] = []
+    imported_dir: Path | None = None
 
     for audio in audio_files:
         audio_path = Path((audio or "").strip()).expanduser().resolve()
@@ -49,16 +75,15 @@ def _collect_audio_candidates(
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
         if not _is_audio_file(audio_path):
             raise ValueError(f"Unsupported audio extension: {audio_path}")
-        candidates.append(audio_path)
+        if imported_dir is None:
+            imported_dir = _make_import_dir(baseline=baseline)
+        candidates.append(_copy_into_import_dir(audio_path, imported_dir))
 
     if not archives:
-        return sorted(set(candidates)), None
+        return sorted(set(candidates)), imported_dir
 
-    imports_root = baseline.paths.data_dir / "datasets" / "imports"
-    imports_root.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    imported_dir = imports_root / f"import_{stamp}"
-    imported_dir.mkdir(parents=True, exist_ok=True)
+    if imported_dir is None:
+        imported_dir = _make_import_dir(baseline=baseline)
 
     for archive in archives:
         archive_path = Path((archive or "").strip()).expanduser().resolve()
