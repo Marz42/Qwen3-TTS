@@ -2,7 +2,7 @@
 
 ## 日期
 
-- 最后更新：2026-05-08
+- 最后更新：2026-05-09
 
 ## 当前阶段
 
@@ -13,8 +13,9 @@
 - 已升级为 CUDA-enabled torch，在 GTX 1660 上完成完整 TTS 推理验证。
 - 已定位并修复半精度下 speech tokenizer 产生全 NaN 波形的 bug，1.7B CustomVoice / VoiceDesign 音频现在可正常收听。
 - 已启动本地 MVP 实施，并完成 Phase 0、Phase 1、Phase 2 与 Phase 3。
-- 当前代码状态已具备运行基线模块、SQLite 元数据层、单例模型管理器、FastAPI 基础壳层，并已完成 Phase 4 验收。
+- 当前代码状态已具备运行基线模块、SQLite 元数据层、单例模型管理器、FastAPI 基础骨架、通用 TTS 接口、Base prompt 提取与复用、训练任务调度器。
 - Phase 5 已完成验收，`extract_prompt` API、prompt 落盘、模拟重启后 `prompt_id` 复用与受控错误均已验证。
+- Phase 6 已完成 TestClient 窄验证（8/8 通过），训练任务状态机、磁盘锁、启动恢复、并发拒绝、503 推理拦截均通过。
 
 ## 本次已完成内容
 
@@ -78,6 +79,31 @@
 - 验证过程中生成的占位模型目录、prompt 文件和临时数据库已清理，当前保留的是正式目录骨架和实现代码。
 
 ### MVP Phase 5 已完成验收
+### MVP Phase 6 已完成 TestClient 窄验证
+
+- 新增 `qwen_tts/app/job_manager.py`，实现训练任务状态机（`pending` / `running` / `succeeded` / `failed`）。
+	- 任务状态存储在 `data/jobs/<job_id>/metadata.json`
+	- 子进程日志落盘到 `data/jobs/<job_id>/prepare.log` 和 `data/jobs/<job_id>/train.log`
+	- 磁盘 GPU 锁写入 `data/jobs/gpu.lock`（使用现有 `JobLockRecord` 格式）
+	- 训练线程为 daemon 线程，不阻塞 API 主线程
+	- 成功后自动在 `models` 表注册最终 checkpoint（`custom_voice` 类型）
+- 新增 `POST /api/v1/models/train`：
+	- preflight 校验：样本数 ≥ 5、模型类型必须为 `base`、batch_size 自动下调至 ≤ 样本数
+	- 返回 `job_id` + `status=pending`（HTTP 202）
+	- GPU 已忙时返回 `409`
+- 新增 `GET /api/v1/jobs/{job_id}`：返回任务状态 + 最后 50 行日志（`log_tail`）
+- 训练期间 TTS 接口返回 `503`（通过现有 `has_disk_gpu_lock()` + `GPUResourceBusyError` 机制实现）
+- `create_app()` 启动时执行锁恢复：stale PID 清理脏 gpu.lock，关联 job 状态更新为 `failed`
+- 已通过 8 项 TestClient 窄验证：
+	1. 任务提交后进入 `running` 并最终到达 `succeeded`
+	2. 训练锁存在时 TTS 返回 `503`
+	3. 失败任务锁已释放，状态为 `failed`，error 有内容
+	4. 样本数不足时返回 `400`（preflight 拒绝）
+	5. 非 base 模型返回 `400`（preflight 拒绝）
+	6. 启动锁恢复：stale lock + dead PID → lock 清理 + job 标记为 `failed`
+	7. `GET /api/v1/jobs/{job_id}` 返回 `log_tail`
+	8. 并发训练提交返回 `409`
+- 注意：真实 `sft_12hz.py` 需要 `flash_attention_2`，本机不支持，当前验证使用 fake subprocess runner，真实训练需要支持 flash-attn 的环境。
 
 - 新增 `qwen_tts/app/voice_service.py`，实现 Base prompt 提取与落盘注册。
 - 新增 `POST /api/v1/voices/extract_prompt` 及对应请求/响应 schema。
@@ -163,15 +189,19 @@
 - `qwen_tts/app/model_manager.py`：MVP Phase 2 单例模型管理器。
 - `qwen_tts/app/api/`：MVP Phase 3 FastAPI 基础骨架。
 - `qwen_tts/app/tts_service.py`：MVP Phase 4 通用 TTS 服务与分流逻辑。
+- `qwen_tts/app/voice_service.py`：MVP Phase 5 Base prompt 提取与复用。
+- `qwen_tts/app/job_manager.py`：MVP Phase 6 训练任务状态机与磁盘锁管理。
+- `qwen_tts/app/api/routes/jobs.py`：MVP Phase 6 `GET /api/v1/jobs/{job_id}` 路由。
+- `examples/test_phase6_job_manager.py`：Phase 6 TestClient 窄验证脚本（8/8 通过）。
 
 ## 当前仍未完成的事项
 
 - 尚未验证 0.6B 模型在本机的推理速度与显存占用。
-- 尚未把训练任务调度层接入到新的 MVP 基础模块中。
-- 尚未把 Gradio 从当前直连模型方式切到纯 HTTP 调 FastAPI。
+- Phase 6 真实 sft_12hz.py 训练流程受 flash_attention_2 限制，当前验收仅覆盖状态机与控制流，未覆盖实际 GPU 训练。
+- 尚未把 Gradio 从当前直连模型方式切到纯 HTTP 调 FastAPI（Phase 7/8）。
 
 ## 下一步建议方向
 
-1. 进入 Phase 6：落地调度器与训练任务状态机。
-2. 评估 0.6B 模型在本机的推理速度、显存占用和接口行为差异。
-3. 把当前 Gradio 入口逐步改为纯 HTTP 客户端，统一走 FastAPI。
+1. 进入 Phase 7：落地数据准备 GUI（Gradio 页面，HTTP → FastAPI）。
+2. 进入 Phase 8：落地 TTS 推理 GUI。
+3. 评估 0.6B 模型在本机的推理速度、显存占用和接口行为差异。

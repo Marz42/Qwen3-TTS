@@ -81,3 +81,40 @@ class TTSGenerateResponse(BaseModel):
     model_type: str
     sample_rate: int
     output_urls: list[str]
+
+
+
+class TrainRequest(BaseModel):
+    base_model_id: int
+    speaker_name: str
+    input_jsonl: str  # absolute path on the server to a raw JSONL training file
+    num_epochs: int = 3
+    batch_size: int = 2
+    lr: float = 2e-5
+    tokenizer_model_path: Optional[str] = None  # defaults to base_model_path
+
+
+class TrainResponse(BaseModel):
+    job_id: str
+    status: str
+    created_at: str
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    created_at: str
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    base_model_id: int
+    base_model_path: str
+    speaker_name: str
+    output_model_path: str
+    output_model_id: Optional[int] = None
+    error: Optional[str] = None
+    num_epochs: int
+    batch_size: int
+    lr: float
+    input_jsonl: str
+    prepared_jsonl: str
+    log_tail: Optional[str] = None
